@@ -1,0 +1,227 @@
+---
+title: "Serie temporal NDVI polígonos creados"
+author: 
+date: 
+output:
+ 
+  
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# CARGAR LIBRERIAS --------------------------------------------------------
+pacman::p_load(ggplot2
+               ,dplyr
+               ,lubridate
+               ,tidyr
+               ,stringr
+               ,forcats
+               ,plotly
+               ,corrplot)
+
+# Setear ruta inicial
+path <- "C:/Users/Eapizarroa/OneDrive - Instituto Nacional de Estadisticas/SDMM/Landcover/Grafica_series/Inputs/"
+
+# Listar archivos a trabajar
+lista <- list.files(path)
+
+
+list_graph <- list()
+
+# CICLO PARA GRAFICA ------------------------------------------------------
+for(i in 1:length(lista)){
+  
+  ## Leo base
+  datos <- read.csv(paste0(path,lista[i]))
+
+  # Cambio de estructura de fecha 
+  datos <- datos %>% as_tibble() %>%
+    separate(system.index
+             , sep = "_"
+             ,into = c("Poligono","Fecha1", "Fecha2", "Sat")) %>% 
+    filter(Sat %in% c("T19HBA")) %>% 
+    mutate(Date = ymd(Date)
+           ,Poligono = as.factor(Poligono)
+           ,Poligono = fct_inorder(Poligono)) %>% 
+    select(-c(Fecha1, Fecha2))
+  
+  
+  # Obtener nombre de cada archivo para exportacion
+  name <- str_remove(lista[i], "\\.csv$")
+  
+  # Ploteo
+  ggplot(datos, aes(x=Date, y=NDVI, color=Poligono)) +      
+  geom_line() + 
+  labs(
+       title= paste0('Serie temporal NDVI '), 
+       subtitle='Comportamiento histórico de ubicación de polígono', 
+       caption='Instituto Nacional de Estadísticas, 2023',
+       x='Fecha', y='NDVI') + 
+  theme(plot.title=element_text(family='Anton', size=20),
+        plot.subtitle=element_text(family='Anton'),
+        axis.title.x = element_text(family='Anton', face='bold', hjust=0.5),
+        axis.title.y = element_text(family='Anton', face='bold', hjust=0.5)) +
+  facet_grid('Poligono') -> p
+  
+  plot <- p + theme(legend.position='none')
+  
+  list_graph[[i]] <- ggplotly(plot)
+  
+  message(paste0("Grafico_", name, "_generado"))
+  
+}
+```
+
+```{r include=FALSE}
+## analisis de correlacion (en este caso solo aplicable a maiz por cantidad de poligonos)
+espc <- read.csv(paste0(path, lista[[4]])) %>% 
+  as_tibble() %>% 
+  separate(system.index
+             , sep = "_"
+             ,into = c("Polígono","Fecha1", "Fecha2", "Sat")) %>% 
+    filter(Sat %in% c("T19HBA")) %>% 
+    mutate(Date = ymd(Date)) %>% 
+    select(-c(Fecha1, Fecha2, Sat)) %>% 
+  distinct(Date, Polígono, .keep_all = T)
+
+# serie completa
+espc1<- espc %>%
+pivot_wider(id_cols = "Date"
+            , names_from = "Polígono"
+            , values_from = "NDVI"
+            , names_prefix = "Polígono") %>% 
+  select(-Date)
+
+# año agricola
+espc2 <- espc %>%
+pivot_wider(id_cols = "Date"
+            , names_from = "Polígono"
+            , values_from = "NDVI"
+            , names_prefix = "Polígono") %>% 
+  # Año agricola
+  filter(Date > "2020-05-01" & Date < "2023-04-30") %>% 
+  select(-Date)
+  
+# Correlacion
+M <- cor(espc1, use = "pairwise.complete.obs")
+M2 <- cor(espc2, use = "pairwise.complete.obs")
+# Test de correlacion
+testRes1 <- cor.mtest(espc1, method = c("pearson"), conf.level = 0.95)
+testRes2 <- cor.mtest(espc2, method = c("pearson"), conf.level = 0.95)
+
+```
+
+### Contexto
+
+<div style="text-align: justify">
+Dentro de los pasos a seguir para la construcción del Landcover se encuentra la búsqueda y generación de datos de entrenamiento y validación del modelo. En este reporte se presentan los primeros resultados obtenidos de la serie temporal de NDVI de polígonos generados para especies de **Cereales**.
+<div/>
+
+### Fuentes de información
+
+<div style="text-align: justify">
+Para la generación de los polígonos de especies se utilizó información espacial obtenida del CAF 2021 (Puntos de gestión de la Indagación Operativa). Se utilizan sólo aquellas UPAs identificadas como uniprediales. Para separar cada UPA en un determinado uso de suelo se considera lo siguiente (ejemplo cereales):
+<div/>
+
+<div style="font-size: smaller">
+$$Uso\; suelo\; Cereal\;= si\; US61_1 > (US60\; * \; 0,99) $$
+<div/>
+
+
+<div style="text-align: justify; font-size: 14px">
+Luego de filtradas la UPAs uniprediales que cumplan esta condición se realiza un nuevo filtro de aquellas que posean declaración de una sola especie. De esta manera se puede acudir a un mapa y ver si el punto coincide con la especie en cuestión o se deben analizar sus alrededores (se realiza separación para riego y secano). Finalmente se asocian estas UPAs al punto de Indagación y son transformados en objetos vectoriales con atributos espacaiales para ser trabajados en GEE o algun software GIS.
+<div/>
+
+
+### Procedimiento 
+
+<div style="text-align: justify; font-size: 14px">
+Ya generados archivos vectoriales de las UPAs uniprediales con unico cultivo son cargados en la plataforma GEE para ser trabajados.
+<div/>
+1. Se despliega el punto CAF de la especie de la categoría correspondiente en el mapa.
+<div/>
+2. Se grafica la serie temporal de medianas NDVI (2018 a 2023) de la especie (NDVI obtenido con Sentinel-2 y con máscara de nubes aplicada).
+<div/>
+3. Se utiliza un documento denominado "clasificación de observaciones" y los png obtenidos previamente para realizar una buena clasificación de la especie. 
+<div/>
+4. Se genera un polígono de la especie en GEE. Se acota el polígono a una zona representativa de la especie dentro del predio
+<div/>
+5. Se descarga una data frame con la mediana de los poligonos generados para su posterior gráfica y análisis.
+
+<div/>
+
+### Resultados {.tabset}
+### Cereales {.tabset}
+
+#### Arroz
+##### 1. **Riego**
+```{r list_graph, echo=FALSE,fig.width=10,message=FALSE, warning=FALSE}
+list_graph[[1]]
+```
+
+##### 2. **Secano**
+```{r echo=FALSE}
+
+```
+
+#### Avena
+##### 1. **Riego**
+```{r list_graph2, echo=FALSE,fig.width=10,message=FALSE, warning=FALSE}
+list_graph[[2]]
+```
+
+
+##### 2. **Secano**
+```{r list_graph3, echo=FALSE,fig.width=10,message=FALSE, warning=FALSE}
+list_graph[[3]]
+```
+
+#### Maíz
+##### 1. **Riego**
+```{r list_graph4, echo=FALSE,fig.width=9,fig.height=17,message=FALSE, warning=FALSE}
+list_graph[[4]]
+
+# Graficas de correlacion
+par(mfrow=c(2, 1))
+corrplot(M, p.mat = testRes1$p, method = 'color', type = 'lower', insig ='blank',
+         addCoef.col ='black', number.cex = 0.8, order = 'AOE', diag = FALSE,
+         title = "Correlación serie completa "
+         #, mar = c(0,0,0,0)
+         )
+
+corrplot(M2, p.mat = testRes2$p, method = 'color', type = 'lower', insig ='blank',
+         addCoef.col ='black', number.cex = 0.8, order = 'AOE', diag = FALSE,
+         title = "Correlacion año agrícola"
+         #, mar = c(0,0,0,0)
+         )
+```
+
+##### 2. **Secano**
+```{r echo=FALSE}
+
+```
+
+#### Mijo
+##### 1. **Riego**
+```{r list_graph5, echo=FALSE,fig.width=10,message=FALSE, warning=FALSE}
+list_graph[[5]]
+```
+
+##### 2. **Secano**
+```{r echo=FALSE}
+
+```
+
+#### Trigo blanco
+##### 1. **Riego**
+```{r list_graph6, echo=FALSE,fig.width=10,message=FALSE, warning=FALSE}
+list_graph[[6]]
+```
+
+##### 2. **Secano**
+```{r echo=FALSE}
+
+```

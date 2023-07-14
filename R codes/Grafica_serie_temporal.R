@@ -57,11 +57,11 @@ for(i in 1:length(lista)){
   #plot <- p + theme(legend.position='none')
   
   ggplot2::ggsave(filename = paste0("Outputs/Serie_junta/",name,".png"),
-                  plot = plot, 
+                  plot = p, 
                   device = "png",
                   width = 22, height = 10)
   
-  plot2 <- ggplotly(plot)
+  plot2 <- ggplotly(p)
   
   htmlwidgets::saveWidget(
     widget = plot2, #the plotly object
